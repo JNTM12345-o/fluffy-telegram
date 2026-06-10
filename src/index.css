@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    font-family: 'Noto Sans SC', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color: #e2e8f0;
+    background-color: #0b0b1f;
+    overflow-x: hidden;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: 'Orbitron', 'Noto Sans SC', sans-serif;
+    letter-spacing: 0.05em;
+  }
+
+  .bg-game {
+    background:
+      radial-gradient(1200px 600px at 10% 10%, rgba(139, 92, 246, 0.25), transparent 60%),
+      radial-gradient(900px 500px at 90% 20%, rgba(236, 72, 153, 0.22), transparent 60%),
+      radial-gradient(1000px 600px at 50% 100%, rgba(34, 211, 238, 0.25), transparent 60%),
+      linear-gradient(180deg, #09091f 0%, #120a2a 50%, #0b0b1f 100%);
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .grid-floor {
+    background-image:
+      linear-gradient(rgba(34, 211, 238, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 211, 238, 0.08) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+  }
+
+  .scroll-track {
+    background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6);
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.5);
+  }
+
+  .btn-neon {
+    @apply font-display uppercase tracking-wider;
+    transition: transform 0.15s ease, box-shadow 0.25s ease, filter 0.25s ease;
+  }
+
+  .btn-neon:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.1);
+  }
+
+  .btn-neon:active {
+    transform: translateY(0);
+  }
+
+  .option-card {
+    transition: transform 0.15s ease, border-color 0.2s ease, background 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .option-card:hover:not(.is-correct):not(.is-wrong):not(.is-locked) {
+    transform: translateY(-2px);
+    border-color: rgba(167, 139, 250, 0.6);
+    background: rgba(167, 139, 250, 0.08);
+  }
+
+  .text-stroke-cyan {
+    text-shadow:
+      0 0 8px rgba(34, 211, 238, 0.8),
+      0 0 16px rgba(34, 211, 238, 0.4);
+  }
+
+  .text-stroke-pink {
+    text-shadow:
+      0 0 8px rgba(244, 114, 182, 0.8),
+      0 0 16px rgba(244, 114, 182, 0.4);
+  }
+
+  .text-stroke-lime {
+    text-shadow:
+      0 0 8px rgba(163, 230, 53, 0.8),
+      0 0 16px rgba(163, 230, 53, 0.4);
+  }
+
+  .shine-overlay {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .shine-overlay::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.15), transparent);
+    transform: skewX(-20deg);
+    animation: shine 3.5s ease-in-out infinite;
+  }
+
+  @keyframes shine {
+    0% {
+      left: -100%;
+    }
+    60% {
+      left: 200%;
+    }
+    100% {
+      left: 200%;
+    }
+  }
+
+  @keyframes floatBlob {
+    0%,
+    100% {
+      transform: translate(0, 0) scale(1);
+    }
+    50% {
+      transform: translate(20px, -30px) scale(1.1);
+    }
+  }
+
+  .blob {
+    animation: floatBlob 10s ease-in-out infinite;
+  }
+}

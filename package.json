@@ -1,0 +1,36 @@
+{
+  "name": "qdyx-game",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "极速抢答 · Quiz Blitz - 快节奏知识抢答游戏（PWA 多平台应用",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:host": "vite --host",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "preview:host": "vite preview --host",
+    "start": "vite preview --host --port 4173",
+    "start:server": "cd api && npm start",
+    "start:all": "start \"后端\" cmd /k \"cd /d api && npm start\" && timeout /t 2 && start \"前端\" cmd /k \"npm run dev\" && timeout /t 3 && start \"\" \"http://localhost:5173/\""
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.40",
+    "tailwindcss": "^3.4.7",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.4",
+    "vite-plugin-pwa": "^0.20.1"
+  }
+}
