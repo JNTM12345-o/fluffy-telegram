@@ -1,4 +1,3 @@
-import express from 'express'
 import { WebSocketServer, WebSocket } from 'ws'
 import http from 'http'
 
@@ -303,26 +302,26 @@ function handleLeave(ws) {
   }
 }
 
-const app = express()
-app.use(express.json())
-
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*')
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-  res.header('Access-Control-Allow-Headers', 'Content-Type')
-  next()
-})
-
-app.get('/health', (req, res) => {
-  res.send('OK')
-})
-
-app.get('/', (req, res) => {
-  res.send('多人抢答游戏服务器')
-})
-
 const PORT = process.env.PORT || 8080
-const server = http.createServer(app)
+const server = http.createServer((req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200)
+    res.end()
+    return
+  }
+  
+  if (req.url === '/health' || req.url === '/健康') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end('OK')
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end('多人抢答游戏服务器')
+  }
+})
 const wss = new WebSocketServer({ noServer: true })
 
 server.on('upgrade', (request, socket, head) => {
