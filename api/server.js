@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws'
+import http from 'http'
 
 // ============ 题库 ============
 const QUESTION_BANK = [
@@ -392,9 +393,19 @@ function handleLeave(ws) {
 }
 
 // ============ 启动 ============
-// 支持云端部署：Railway/Render 等使用 PORT 环境变量
 const PORT = process.env.PORT || 8080
-const wss = new WebSocketServer({ port: PORT, host: '0.0.0.0' })
+
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end('OK')
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end('多人抢答游戏服务器')
+  }
+})
+
+const wss = new WebSocketServer({ server })
 
 wss.on('connection', (ws) => {
   console.log(`[+] 连接 | 当前房间数: ${rooms.size}`)
@@ -403,9 +414,10 @@ wss.on('connection', (ws) => {
   ws.on('error', (err) => { console.error('WS错误:', err.message); handleLeave(ws) })
 })
 
-console.log('')
-console.log('  🎮  多人抢答服务器')
-console.log(`  📡  WebSocket: ws://localhost:${PORT}`)
-console.log(`  🌐  局域网:   ws://<本机IP>:${PORT}`)
+server.listen(PORT, '0.0.0.0', () => {
+  console.log('')
+  console.log('  🎮  多人抢答服务器')
+  console.log(`  📡  WebSocket: ws://localhost:${PORT}`)
+  console.log(`  🌐  局域网:   ws://<本机IP>:${PORT}`)
 console.log(`  ☁️  云端:     ws://<你的域名>:${PORT}`)
 console.log('')
