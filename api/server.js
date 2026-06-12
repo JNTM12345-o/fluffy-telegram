@@ -317,20 +317,15 @@ const server = http.createServer((req, res) => {
   if (req.url === '/health' || req.url === '/健康') {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('OK')
-  } else {
+  } else if (req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('多人抢答游戏服务器')
+  } else {
+    res.writeHead(404, { 'Content-Type': 'text/plain' })
+    res.end('Not Found')
   }
 })
-const wss = new WebSocketServer({ noServer: true })
-
-server.on('upgrade', (request, socket, head) => {
-  if (request.url === '/ws') {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request)
-    })
-  }
-})
+const wss = new WebSocketServer({ server, path: '/ws' })
 
 wss.on('connection', (ws) => {
   console.log(`[+] 连接 | 当前房间数: ${rooms.size}`)
