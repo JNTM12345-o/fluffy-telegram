@@ -31,7 +31,7 @@ function getServerUrl(): string {
     return `${protocol}//${window.location.host}/ws`
   }
 
-  return 'wss://fluffy-telegram-production.up.railway.app'
+  return 'wss://fluffy-telegram-production.up.railway.app/ws'
 }
 
 let SERVER_URL: string | null = null

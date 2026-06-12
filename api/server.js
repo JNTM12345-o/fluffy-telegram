@@ -405,7 +405,7 @@ const server = http.createServer((req, res) => {
   }
 })
 
-const wss = new WebSocketServer({ server })
+const wss = new WebSocketServer({ server, path: '/ws' })
 
 wss.on('connection', (ws) => {
   console.log(`[+] 连接 | 当前房间数: ${rooms.size}`)
