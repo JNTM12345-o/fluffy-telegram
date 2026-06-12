@@ -1,7 +1,7 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "cd api && npm install"
-startCommand = "cd api && node server.js"
+buildCommand = "npm install"
+startCommand = "node server.js"
 
 [deploy]
 rootDirectory = "api"

@@ -317,20 +317,34 @@ const server = http.createServer((req, res) => {
   if (req.url === '/health' || req.url === '/健康') {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('OK')
-  } else if (req.url === '/') {
+  } else if (req.url === '/' || req.url.startsWith('/?')) {
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end('多人抢答游戏服务器')
+  } else if (req.url.startsWith('/ws')) {
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.end('WebSocket endpoint - use wss:// protocol')
   } else {
     res.writeHead(404, { 'Content-Type': 'text/plain' })
     res.end('Not Found')
   }
 })
-const wss = new WebSocketServer({ server, path: '/ws' })
+
+const wss = new WebSocketServer({ noServer: true })
+
+server.on('upgrade', (request, socket, head) => {
+  if (request.url === '/ws' || request.url.startsWith('/ws')) {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request)
+    })
+  } else {
+    socket.destroy()
+  }
+})
 
 wss.on('connection', (ws) => {
-  console.log(`[+] 连接 | 当前房间数: ${rooms.size}`)
+  console.log(`[+] WebSocket连接 | 当前房间数: ${rooms.size}`)
   ws.on('message', (data) => handleMessage(ws, data.toString()))
-  ws.on('close', () => { handleLeave(ws); console.log(`[-] 断开 | 当前房间数: ${rooms.size}`) })
+  ws.on('close', () => { handleLeave(ws); console.log(`[-] WebSocket断开 | 当前房间数: ${rooms.size}`) })
   ws.on('error', (err) => { console.error('WS错误:', err.message); handleLeave(ws) })
 })
 
