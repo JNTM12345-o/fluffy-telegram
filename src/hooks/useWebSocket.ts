@@ -23,16 +23,18 @@ function notify() {
   listeners.forEach((fn) => fn())
 }
 
-// 使用相对路径，由 Vite 代理到 WebSocket 服务器（本地开发）
-// 或通过环境变量 VITE_WS_URL 配置云端地址
 function getServerUrl(): string {
-  // 云端部署时使用环境变量
   const envUrl = import.meta.env.VITE_WS_URL
   if (envUrl) return envUrl
 
-  // 本地开发：使用 Vite 代理
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}/ws`
+  const hostname = window.location.hostname
+
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
+    return `${protocol}//${window.location.host}/ws`
+  }
+
+  return 'wss://fluffy-telegram-production.up.railway.app'
 }
 
 let SERVER_URL: string | null = null
