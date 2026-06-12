@@ -323,7 +323,17 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 8080
 const server = http.createServer(app)
-const wss = new WebSocketServer({ server, path: '/ws' })
+const wss = new WebSocketServer({ noServer: true })
+
+server.on('upgrade', (request, socket, head) => {
+  if (request.url === '/ws') {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request)
+    })
+  } else {
+    socket.destroy()
+  }
+})
 
 wss.on('connection', (ws) => {
   console.log(`[+] 连接 | 当前房间数: ${rooms.size}`)
