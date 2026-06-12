@@ -1,7 +1,7 @@
+import express from 'express'
 import { WebSocketServer, WebSocket } from 'ws'
 import http from 'http'
 
-// ============ 题库 ============
 const QUESTION_BANK = [
   { id: 1, text: '世界上最大的海洋是哪一个？', options: ['大西洋', '印度洋', '太平洋', '北冰洋'], correctIndex: 2, category: '地理' },
   { id: 2, text: '人体最大的器官是？', options: ['肝脏', '皮肤', '大脑', '心脏'], correctIndex: 1, category: '科学' },
@@ -27,394 +27,302 @@ const QUESTION_BANK = [
 
 const PLAYER_COLORS = ['#22d3ee', '#f472b6', '#a78bfa', '#a3e635', '#fb923c', '#f87171']
 
-// ============ 房间管理 ============
 const rooms = new Map()
-const clientRooms = new Map()
+const roomCodes = new Set()
 
 function generateRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let code = ''
-  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)]
-  if (rooms.has(code)) return generateRoomCode()
+  let code
+  do {
+    code = Math.random().toString(36).substring(2, 6).toUpperCase()
+  } while (roomCodes.has(code))
+  roomCodes.add(code)
   return code
 }
 
-function generatePlayerId() {
-  return Math.random().toString(36).substring(2, 10)
-}
-
-function pickRandomQuestions(n) {
-  const shuffled = [...QUESTION_BANK].sort(() => Math.random() - 0.5)
-  return shuffled.slice(0, Math.min(n, QUESTION_BANK.length))
-}
-
-function send(ws, msg) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
-}
-
-function broadcast(room, msg, excludeId) {
-  room.clients.forEach((clientWs, playerId) => {
-    if (playerId !== excludeId) send(clientWs, msg)
+function broadcastState(room) {
+  const state = {
+    code: room.code,
+    hostId: room.hostId,
+    players: Array.from(room.players.values()).map(p => ({
+      id: p.id,
+      name: p.name,
+      score: p.score,
+      color: p.color,
+      isHost: p.id === room.hostId
+    })),
+    status: room.status,
+    currentRound: room.currentRound,
+    totalRounds: room.totalRounds,
+    question: room.question,
+    correctAnswer: room.correctAnswer,
+    roundPhase: room.roundPhase,
+    timeLeft: room.timeLeft,
+    config: room.config,
+    winner: room.winner
+  }
+  room.players.forEach((player) => {
+    if (player.ws.readyState === WebSocket.OPEN) {
+      player.ws.send(JSON.stringify(state))
+    }
   })
 }
 
-function broadcastAll(room, msg) {
-  broadcast(room, msg, undefined)
+function handleMessage(ws, data) {
+  try {
+    const msg = JSON.parse(data)
+    const { type, payload } = msg
+
+    switch (type) {
+      case 'create_room': {
+        const { playerName, config } = payload
+        const code = generateRoomCode()
+        const player = {
+          id: `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: playerName,
+          score: 0,
+          color: PLAYER_COLORS[0],
+          ws
+        }
+        const room = {
+          code,
+          hostId: player.id,
+          players: new Map([[player.id, player]]),
+          status: 'waiting',
+          currentRound: 0,
+          totalRounds: config.totalRounds,
+          question: null,
+          correctAnswer: null,
+          roundPhase: 'idle',
+          timeLeft: null,
+          config,
+          winner: null,
+          timers: { race: null, answer: null }
+        }
+        rooms.set(code, room)
+        ws.send(JSON.stringify({ type: 'room_created', payload: { code, playerId: player.id } }))
+        broadcastState(room)
+        break
+      }
+
+      case 'join_room': {
+        const { code, playerName } = payload
+        const room = rooms.get(code)
+        if (!room) {
+          ws.send(JSON.stringify({ type: 'error', payload: { message: '房间不存在' } }))
+          return
+        }
+        if (room.status !== 'waiting') {
+          ws.send(JSON.stringify({ type: 'error', payload: { message: '房间游戏已开始' } }))
+          return
+        }
+        if (room.players.size >= room.config.maxPlayers) {
+          ws.send(JSON.stringify({ type: 'error', payload: { message: '房间已满' } }))
+          return
+        }
+        const player = {
+          id: `player_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: playerName,
+          score: 0,
+          color: PLAYER_COLORS[room.players.size],
+          ws
+        }
+        room.players.set(player.id, player)
+        ws.send(JSON.stringify({ type: 'joined_room', payload: { code, playerId: player.id } }))
+        broadcastState(room)
+        break
+      }
+
+      case 'start_game': {
+        const { code } = payload
+        const room = rooms.get(code)
+        if (!room) return
+        room.status = 'playing'
+        room.currentRound = 1
+        startRound(room)
+        broadcastState(room)
+        break
+      }
+
+      case 'race': {
+        const { code, playerId } = payload
+        const room = rooms.get(code)
+        if (!room || room.roundPhase !== 'racing') return
+        if (!room.firstRacer) {
+          room.firstRacer = playerId
+          room.roundPhase = 'answering'
+          clearTimeout(room.timers.race)
+          startAnswerPhase(room)
+          broadcastState(room)
+        }
+        break
+      }
+
+      case 'answer': {
+        const { code, playerId, answerIndex } = payload
+        const room = rooms.get(code)
+        if (!room || room.roundPhase !== 'answering') return
+        if (room.firstRacer !== playerId) {
+          ws.send(JSON.stringify({ type: 'error', payload: { message: '不是你抢答成功' } }))
+          return
+        }
+        clearTimeout(room.timers.answer)
+        const isCorrect = answerIndex === room.question.correctIndex
+        const player = room.players.get(playerId)
+        if (isCorrect) {
+          player.score += room.config.timePerQuestion * 10 + 50
+        } else {
+          player.score = Math.max(0, player.score - room.config.wrongAnswerPenalty)
+        }
+        room.roundPhase = 'result'
+        room.correctAnswer = room.question.correctIndex
+        broadcastState(room)
+        setTimeout(() => {
+          nextRound(room)
+        }, 3000)
+        break
+      }
+
+      case 'leave_room': {
+        const { code, playerId } = payload
+        const room = rooms.get(code)
+        if (!room) return
+        const player = room.players.get(playerId)
+        if (player) {
+          room.players.delete(playerId)
+          if (playerId === room.hostId) {
+            room.players.forEach((p) => {
+              if (p.ws.readyState === WebSocket.OPEN) {
+                p.ws.send(JSON.stringify({ type: 'host_left' }))
+              }
+            })
+            rooms.delete(code)
+            roomCodes.delete(code)
+          } else {
+            broadcastState(room)
+          }
+        }
+        break
+      }
+
+      case 'get_state': {
+        const { code } = payload
+        const room = rooms.get(code)
+        if (room) {
+          broadcastState(room)
+        }
+        break
+      }
+    }
+  } catch (err) {
+    console.error('消息处理错误:', err)
+  }
 }
 
-function broadcastState(room) {
-  broadcastAll(room, { type: 'room_state', state: room.state })
-}
-
-function getRoomOf(ws) {
-  const info = clientRooms.get(ws)
-  if (!info) return null
-  return rooms.get(info.roomCode) ?? null
-}
-
-function clearRoomTimers(room) {
-  if (room.raceTimer) {
-    clearTimeout(room.raceTimer)
-    room.raceTimer = null
+function startRound(room) {
+  const availableQuestions = QUESTION_BANK.filter(q => !room.usedQuestions?.includes(q.id))
+  if (availableQuestions.length === 0) {
+    room.usedQuestions = []
+    room.question = QUESTION_BANK[Math.floor(Math.random() * QUESTION_BANK.length)]
+  } else {
+    room.question = availableQuestions[Math.floor(Math.random() * availableQuestions.length)]
   }
-  if (room.answerTimer) {
-    clearTimeout(room.answerTimer)
-    room.answerTimer = null
-  }
-  if (room.feedbackTimer) {
-    clearTimeout(room.feedbackTimer)
-    room.feedbackTimer = null
-  }
+  room.usedQuestions = room.usedQuestions || []
+  room.usedQuestions.push(room.question.id)
+  room.correctAnswer = null
+  room.firstRacer = null
+  room.roundPhase = 'racing'
+  room.timeLeft = room.config.timePerQuestion
+  startRacePhase(room)
 }
 
 function startRacePhase(room) {
-  clearRoomTimers(room)
-  room.state.roundPhase = 'race'
-  room.state.answererId = null
-  room.state.roundStartTime = Date.now()
-  broadcastState(room)
-  
-  const timeoutMs = room.state.config.timePerQuestion * 1000
-  room.raceTimer = setTimeout(() => {
-    if (!rooms.has(room.state.roomCode)) return
-    if (room.state.roundPhase !== 'race') return
-    
-    const connectedPlayers = room.state.players.filter(p => p.isConnected)
-    if (connectedPlayers.length === 0) {
-      room.state.phase = 'result'
+  room.timers.race = setTimeout(() => {
+    if (room.roundPhase === 'racing') {
+      room.roundPhase = 'answering'
+      room.firstRacer = null
+      startAnswerPhase(room)
       broadcastState(room)
-      return
-    }
-    
-    const randomPlayer = connectedPlayers[Math.floor(Math.random() * connectedPlayers.length)]
-    room.state.answererId = randomPlayer.id
-    room.state.roundPhase = 'answer'
-    room.state.roundStartTime = Date.now()
-    broadcastAll(room, { type: 'race_won', playerId: randomPlayer.id })
-    broadcastState(room)
-    
-    startAnswerPhase(room)
-  }, timeoutMs)
-}
-
-function startAnswerPhase(room) {
-  clearRoomTimers(room)
-  room.state.roundPhase = 'answer'
-  room.state.roundStartTime = Date.now()
-  broadcastState(room)
-  
-  const timeoutMs = room.state.config.timePerQuestion * 1000
-  room.answerTimer = setTimeout(() => {
-    if (!rooms.has(room.state.roomCode)) return
-    if (room.state.roundPhase !== 'answer') return
-    
-    handleSubmitAnswer(room, room.state.answererId, -1)
-  }, timeoutMs)
-}
-
-function handleSubmitAnswer(room, playerId, selectedIndex) {
-  clearRoomTimers(room)
-  
-  const question = room.state.currentQuestion
-  if (!question) return
-  
-  const player = room.state.players.find((p) => p.id === playerId)
-  if (!player) return
-  
-  const correct = selectedIndex >= 0 && selectedIndex === question.correctIndex
-  const timeUsed = room.state.roundStartTime ? (Date.now() - room.state.roundStartTime) / 1000 : room.state.config.timePerQuestion
-  const baseScore = correct ? 100 : 0
-  const bonus = correct ? Math.max(0, Math.floor((room.state.config.timePerQuestion - timeUsed) * 10)) : 0
-  const gained = baseScore + bonus
-  const penalty = !correct ? room.state.config.wrongAnswerPenalty : 0
-  
-  if (player.isConnected) {
-    player.score += gained - penalty
-  }
-  
-  room.state.roundResult = {
-    correct,
-    correctIndex: question.correctIndex,
-    scores: Object.fromEntries(room.state.players.map((p) => [p.id, p.score])),
-  }
-  room.state.roundPhase = 'feedback'
-  broadcastState(room)
-  
-  room.feedbackTimer = setTimeout(() => {
-    if (!rooms.has(room.state.roomCode)) return
-    
-    room.state.answererId = null
-    room.state.roundResult = null
-    
-    if (room.state.currentRound + 1 >= room.currentQuestions.length) {
-      room.state.phase = 'result'
-      broadcastState(room)
-    } else {
-      room.state.currentRound++
-      room.state.currentQuestion = room.currentQuestions[room.state.currentRound]
-      startRacePhase(room)
     }
   }, 3000)
 }
 
-// ============ 消息处理 ============
-function handleMessage(ws, raw) {
-  let msg
-  try {
-    msg = JSON.parse(raw)
-  } catch {
-    send(ws, { type: 'error', message: '无效的消息格式' })
-    return
-  }
-
-  switch (msg.type) {
-    case 'create_room': {
-      if (clientRooms.has(ws)) {
-        send(ws, { type: 'error', message: '请先离开当前房间' })
-        return
-      }
-      const roomCode = generateRoomCode()
-      const playerId = generatePlayerId()
-      const player = {
-        id: playerId,
-        nickname: (msg.nickname || '玩家1').substring(0, 6),
-        score: 0,
-        isHost: true,
-        isReady: true,
-        isConnected: true,
-        color: PLAYER_COLORS[0],
-      }
-      const room = {
-        state: {
-          roomCode,
-          players: [player],
-          phase: 'waiting',
-          currentRound: -1,
-          config: { ...msg.config, totalRounds: 10 },
-          currentQuestion: null,
-          answererId: null,
-          roundPhase: 'race',
-          roundStartTime: null,
-          roundResult: null,
-        },
-        clients: new Map([[playerId, ws]]),
-        currentQuestions: [],
-        raceTimer: null,
-        answerTimer: null,
-        feedbackTimer: null,
-      }
-      rooms.set(roomCode, room)
-      clientRooms.set(ws, { roomCode, playerId })
-      send(ws, { type: 'joined', playerId, state: room.state })
-      break
-    }
-
-    case 'join_room': {
-      if (clientRooms.has(ws)) {
-        send(ws, { type: 'error', message: '请先离开当前房间' })
-        return
-      }
-      const room = rooms.get((msg.roomCode || '').toUpperCase())
-      if (!room) {
-        send(ws, { type: 'error', message: '房间不存在' })
-        return
-      }
-      if (room.state.phase !== 'waiting') {
-        send(ws, { type: 'error', message: '游戏已开始，无法加入' })
-        return
-      }
-      if (room.state.players.length >= room.state.config.maxPlayers) {
-        send(ws, { type: 'error', message: `房间已满（限${room.state.config.maxPlayers}人）` })
-        return
-      }
-      if (room.state.players.some((p) => p.nickname === msg.nickname)) {
-        send(ws, { type: 'error', message: '昵称已被使用' })
-        return
-      }
-      const playerId = generatePlayerId()
-      const player = {
-        id: playerId,
-        nickname: (msg.nickname || '玩家1').substring(0, 6),
-        score: 0,
-        isHost: false,
-        isReady: false,
-        isConnected: true,
-        color: PLAYER_COLORS[room.state.players.length % PLAYER_COLORS.length],
-      }
-      room.state.players.push(player)
-      room.clients.set(playerId, ws)
-      clientRooms.set(ws, { roomCode: room.state.roomCode, playerId })
-      send(ws, { type: 'joined', playerId, state: room.state })
-      broadcast(room, { type: 'room_state', state: room.state }, playerId)
-      break
-    }
-
-    case 'toggle_ready': {
-      const room = getRoomOf(ws)
-      if (!room) return
-      const info = clientRooms.get(ws)
-      const player = room.state.players.find((p) => p.id === info.playerId)
-      if (!player || player.isHost) return
-      player.isReady = !player.isReady
+function startAnswerPhase(room) {
+  room.timeLeft = room.config.timePerQuestion
+  const timer = setInterval(() => {
+    room.timeLeft--
+    if (room.timeLeft <= 0) {
+      clearInterval(timer)
+      room.roundPhase = 'result'
+      room.correctAnswer = room.question.correctIndex
       broadcastState(room)
-      break
-    }
-
-    case 'start_game': {
-      const room = getRoomOf(ws)
-      if (!room) return
-      const info = clientRooms.get(ws)
-      const player = room.state.players.find((p) => p.id === info.playerId)
-      if (!player?.isHost) {
-        send(ws, { type: 'error', message: '只有房主可以开始游戏' })
-        return
-      }
-      const connectedPlayers = room.state.players.filter(p => p.isConnected)
-      if (connectedPlayers.length < 2) {
-        send(ws, { type: 'error', message: '至少需要 2 名玩家' })
-        return
-      }
-      room.currentQuestions = pickRandomQuestions(room.state.config.totalRounds)
-      room.state.phase = 'playing'
-      room.state.currentRound = 0
-      room.state.answererId = null
-      room.state.roundResult = null
-      room.state.currentQuestion = room.currentQuestions[0]
-      room.state.players.forEach((p) => { p.score = 0; p.isReady = false })
-      startRacePhase(room)
-      break
-    }
-
-    case 'race_answer': {
-      const room = getRoomOf(ws)
-      if (!room) return
-      const info = clientRooms.get(ws)
-      if (room.state.phase !== 'playing') return
-      if (room.state.roundPhase !== 'race') return
-      if (room.state.answererId !== null) return
-      
-      const player = room.state.players.find(p => p.id === info.playerId)
-      if (!player?.isConnected) return
-      
-      clearRoomTimers(room)
-      room.state.answererId = info.playerId
-      room.state.roundPhase = 'answer'
-      room.state.roundStartTime = Date.now()
-      broadcastAll(room, { type: 'race_won', playerId: info.playerId })
+      setTimeout(() => {
+        nextRound(room)
+      }, 3000)
+    } else {
       broadcastState(room)
-      
-      startAnswerPhase(room)
-      break
     }
+  }, 1000)
+  room.timers.answer = timer
+}
 
-    case 'submit_answer': {
-      const room = getRoomOf(ws)
-      if (!room) return
-      const info = clientRooms.get(ws)
-      if (room.state.phase !== 'playing') return
-      if (room.state.roundPhase !== 'answer') return
-      if (room.state.answererId !== info.playerId) return
-      
-      const player = room.state.players.find(p => p.id === info.playerId)
-      if (!player?.isConnected) return
-      
-      handleSubmitAnswer(room, info.playerId, msg.selectedIndex)
-      break
-    }
-
-    case 'leave_room':
-      handleLeave(ws)
-      break
+function nextRound(room) {
+  if (room.currentRound >= room.totalRounds) {
+    room.status = 'ended'
+    const players = Array.from(room.players.values())
+    room.winner = players.reduce((a, b) => a.score > b.score ? a : b)
+    broadcastState(room)
+  } else {
+    room.currentRound++
+    startRound(room)
+    broadcastState(room)
   }
 }
 
 function handleLeave(ws) {
-  const info = clientRooms.get(ws)
-  if (!info) return
-  
-  clientRooms.delete(ws)
-  const room = rooms.get(info.roomCode)
-  if (!room) return
-  
-  room.clients.delete(info.playerId)
-  
-  if (room.state.phase === 'waiting') {
-    room.state.players = room.state.players.filter((p) => p.id !== info.playerId)
-    if (room.state.players.length === 0) {
-      clearRoomTimers(room)
-      rooms.delete(info.roomCode)
-      return
-    }
-    if (!room.state.players.some((p) => p.isHost)) {
-      room.state.players[0].isHost = true
-      room.state.players[0].isReady = true
-    }
-  } else {
-    const player = room.state.players.find((p) => p.id === info.playerId)
-    if (player) player.isConnected = false
-    
-    if (room.state.answererId === info.playerId && room.state.roundPhase === 'answer') {
-      room.state.answererId = null
-      room.state.roundPhase = 'race'
-      room.state.roundStartTime = Date.now()
-      broadcastState(room)
-      startRacePhase(room)
-    }
-    
-    const connectedPlayers = room.state.players.filter(p => p.isConnected)
-    if (connectedPlayers.length === 0) {
-      clearRoomTimers(room)
-      rooms.delete(info.roomCode)
-      return
+  for (const [code, room] of rooms) {
+    for (const [playerId, player] of room.players) {
+      if (player.ws === ws) {
+        room.players.delete(playerId)
+        if (playerId === room.hostId) {
+          room.players.forEach((p) => {
+            if (p.ws.readyState === WebSocket.OPEN) {
+              p.ws.send(JSON.stringify({ type: 'host_left' }))
+            }
+          })
+          rooms.delete(code)
+          roomCodes.delete(code)
+        } else if (room.players.size === 0) {
+          rooms.delete(code)
+          roomCodes.delete(code)
+        } else {
+          broadcastState(room)
+        }
+        return
+      }
     }
   }
-  
-  broadcastState(room)
 }
 
-// ============ 启动 ============
-const PORT = process.env.PORT || 8080
+const app = express()
+app.use(express.json())
 
-const server = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
-  
-  if (req.method === 'OPTIONS') {
-    res.writeHead(200)
-    res.end()
-    return
-  }
-  
-  if (req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' })
-    res.end('OK')
-  } else {
-    res.writeHead(200, { 'Content-Type': 'text/plain' })
-    res.end('多人抢答游戏服务器')
-  }
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*')
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  res.header('Access-Control-Allow-Headers', 'Content-Type')
+  next()
 })
 
+app.get('/health', (req, res) => {
+  res.send('OK')
+})
+
+app.get('/', (req, res) => {
+  res.send('多人抢答游戏服务器')
+})
+
+const PORT = process.env.PORT || 8080
+const server = http.createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
 wss.on('connection', (ws) => {
@@ -427,7 +335,8 @@ wss.on('connection', (ws) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log('')
   console.log('  🎮  多人抢答服务器')
-  console.log(`  📡  WebSocket: ws://localhost:${PORT}`)
-  console.log(`  🌐  局域网:   ws://<本机IP>:${PORT}`)
-console.log(`  ☁️  云端:     ws://<你的域名>:${PORT}`)
-console.log('')
+  console.log(`  📡  WebSocket: ws://localhost:${PORT}/ws`)
+  console.log(`  🌐  局域网:   ws://<本机IP>:${PORT}/ws`)
+  console.log(`  ☁️  云端:     wss://<你的域名>/ws`)
+  console.log('')
+})
