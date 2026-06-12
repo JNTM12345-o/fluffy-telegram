@@ -1,9 +1,13 @@
 [phases.setup]
+nixpkgsArchive = "3eb28c5a007f11800d42644d5267b0a3b1f5c0a0"
 
 [phases.install]
 cmds = ["cd api && npm install"]
+dependsOn = ["setup"]
 
 [phases.build]
+cmds = ["echo 'No build step needed'"]
+dependsOn = ["install"]
 
 [start]
 cmd = "cd api && node server.js"
